@@ -13,9 +13,10 @@ In order to run Security Monkey you must have set-up a service principal in your
 At this time Security Monkey is only scanning your subscriptions: the service principal requires "Reader" permissions.
 
 Following environment variables must be set:
-- `Tenant`
-- `ClientID`
-- `ClientSecret`
+- `Tenant`        : the AAD tenant ID
+- `ClientID`      : the service principal's client-id 
+- `ClientSecret`  : the service principal's secret
+- `Subscriptions` : a comma-delimited list of subscription IDs to be scanned (the service principal must have at least reader access to those)
 
 ## Usage
 
