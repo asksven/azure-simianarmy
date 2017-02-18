@@ -4,19 +4,20 @@
 $Tenant           = $Env:Tenant
 $ClientID         = $Env:ClientID
 $ClientSecret     = $Env:ClientSecret
+$Subscriptions    = $Env:Subscriptions
 
 # check if we are all set
-if ( ($Tenant -eq $null) -or ($ClientID -eq $null) -or ($ClientSecret -eq $null) )
+if ( ($Tenant -eq $null) -or ($ClientID -eq $null) -or ($ClientSecret -eq $null) -or ($Subscriptions -eq $null))
 {
-  Write-Output "Environment variables Tenant, ClientID and ClientSecret must be set"
+  Write-Output "Environment variables Tenant, ClientID, ClientSecret and Subscriptions must be set"
   exit
 }
+
 
 $Token            = Invoke-RestMethod -Uri https://login.microsoftonline.com/$tenant/oauth2/token?api-version=1.0 -Method Post -Body @{"grant_type" = "client_credentials"; "resource" = "https://management.core.windows.net/"; "client_id" = $ClientID; "client_secret" = $ClientSecret}
 
 #Write-Host "Access-token: ". $Token.access_token
 
-$subscriptions   = "a2d270bc-d23d-4100-aba5-09a8aac81dc7,532b7299-60fb-48cd-85db-af3f17c267ff,2b9d9ac6-2bf2-4de9-b187-043f22a332d1,a273b95d-3b94-49cf-bea4-a7765d2a22ac,b1fd14d9-41da-4a83-86c5-04a862bdcb3a,82741f54-f8ce-4e38-8671-75d6bc7e7dfd,13d3dfe0-dcef-4a47-a177-c991a84c3662,99b53fb2-3e65-4f98-89b3-f6630e7e7d96"
 $subscriptionArray = $subscriptions -split ','
 
 #Write-Host "Subscription URI: ", $subscriptionURI

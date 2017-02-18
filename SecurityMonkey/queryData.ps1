@@ -4,11 +4,12 @@
 $Tenant           = $Env:Tenant
 $ClientID         = $Env:ClientID
 $ClientSecret     = $Env:ClientSecret
+$Subscriptions    = $Env:Subscriptions
 
 # check if we are all set
-if ( ($Tenant -eq $null) -or ($ClientID -eq $null) -or ($ClientSecret -eq $null) )
+if ( ($Tenant -eq $null) -or ($ClientID -eq $null) -or ($ClientSecret -eq $null) -or ($Subscriptions -eq $null))
 {
-  Write-Output "Environment variables Tenant, ClientID and ClientSecret must be set"
+  Write-Output "Environment variables Tenant, ClientID, ClientSecret and Subscriptions must be set"
   exit
 }
 
@@ -16,40 +17,42 @@ $Token            = Invoke-RestMethod -Uri https://login.microsoftonline.com/$te
 
 #Write-Host "Access-token: ". $Token.access_token
 
-$subscriptionid   = "a2d270bc-d23d-4100-aba5-09a8aac81dc7"
+$subscriptionArray = $subscriptions -split ','
 
 
 #Write-Host "Subscription URI: ", $subscriptionURI
 
-$header = @{
-  'authorization'="Bearer $($Token.access_token)"
-}
+$header = @{ 'authorization'="Bearer $($Token.access_token)" }
 
-# First we query alerts
-$SubscriptionURI  = "https://management.azure.com/subscriptions/$SubscriptionID/providers/microsoft.Security/alerts" +'?api-version=2015-06-01-preview'
+# Iterate over the subscriptions
+foreach ($SubscriptionID in $subscriptionArray)
+{
+  # First we query alerts
+  $SubscriptionURI  = "https://management.azure.com/subscriptions/$SubscriptionID/providers/microsoft.Security/alerts" +'?api-version=2015-06-01-preview'
 
-$Request = Invoke-RestMethod -Uri $SubscriptionURI -Headers $header -ContentType 'application/x-www-form-urlencoded'
-Write-Host "Alerts"
-#$Request
- foreach ($element in $Request.value) {
- 	$element
-  Write-Host "-----------------"
-  $element.properties
- }
+  $Request = Invoke-RestMethod -Uri $SubscriptionURI -Headers $header -ContentType 'application/x-www-form-urlencoded'
+  Write-Host "Alerts"
+  #$Request
+   foreach ($element in $Request.value) {
+   	$element
+    Write-Host "-----------------"
+    $element.properties
+   }
 
-# Then we query security statuses
-$SubscriptionURI  = "https://management.azure.com/subscriptions/$SubscriptionID/providers/microsoft.Security/securityStatuses" +'?api-version=2015-06-01-preview'
+  # Then we query security statuses
+  $SubscriptionURI  = "https://management.azure.com/subscriptions/$SubscriptionID/providers/microsoft.Security/securityStatuses" +'?api-version=2015-06-01-preview'
 
-$Request = Invoke-RestMethod -Uri $SubscriptionURI -Headers $header -ContentType 'application/x-www-form-urlencoded'
-Write-Host "Status"
-#$Request
+  $Request = Invoke-RestMethod -Uri $SubscriptionURI -Headers $header -ContentType 'application/x-www-form-urlencoded'
+  Write-Host "Status"
+  #$Request
 
-foreach ($element in $Request.value) {
-  $element.id
- 	$element.name
-  $element.properties
-  Write-Host ">>>>>>>"
-  $element.properties.patchscannerdata
+  foreach ($element in $Request.value) {
+    $element.id
+   	$element.name
+    $element.properties
+    Write-Host ">>>>>>>"
+    $element.properties.patchscannerdata
 
-  Write-Host "-----------------"
+    Write-Host "-----------------"
+  }
 }
