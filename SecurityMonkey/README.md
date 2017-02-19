@@ -2,8 +2,6 @@
 
 aims at detecting security violations and vulnerabilities using Azure Security Center.
 
-Security is licensed unter the terms of the Apache 2.0 license (https://www.apache.org/licenses/LICENSE-2.0)
- 
 In the future I may look into scanning apps for known framework vulnerabilities.
 
 `getSecurityState.ps1` scans the given enviroment for security weaknesses
