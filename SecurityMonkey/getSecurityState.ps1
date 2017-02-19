@@ -1,3 +1,34 @@
+<# .SYNOPSIS
+     SecurityMonkey is a script that scans Microsoft Azure subscription for a serie of security waeknesses. 
+.DESCRIPTION
+     SecurityMonkey scans your Azure subscriptions, searches for weaknesses and (optionally) takes action:
+       - Use the output of Azure Security Center to report an security alerts
+       - Use the output of Azure Security Center to detect unpatched VMs 
+       - (optionally) stop unpatched VMs and restarts VMs waiting for a reboot 
+.NOTES
+     Author     : asksven - sven.knispel@mail.com
+.LINK
+     https://github.com/asksven/azure-simianarmy
+#>
+
+Set-StrictMode -Version Latest
+
+$Version="1.0.0"
+
+Write-Output " "
+Write-Output " _____                      _ _        ___  ___            _              "
+Write-Output "/  ___|                    (_) |       |  \/  |           | |             "
+Write-Output "\ '--.  ___  ___ _   _ _ __ _| |_ _   _| .  . | ___  _ __ | | _____ _   _ "
+Write-Output " '--. \/ _ \/ __| | | | '__| | __| | | | |\/| |/ _ \| '_ \| |/ / _ \ | | |"
+Write-Output "/\__/ /  __/ (__| |_| | |  | | |_| |_| | |  | | (_) | | | |   <  __/ |_| |"
+Write-Output "\____/ \___|\___|\__,_|_|  |_|\__|\__, \_|  |_/\___/|_| |_|_|\_\___|\__, |"
+Write-Output "                                   __/ |                             __/ |"
+Write-Output "                                  |___/                             |___/ "
+Write-Output "  "
+Write-Output "Version $($Version)  "
+Write-Output "See https://github.com/asksven/azure-simianarmy for more details"
+Write-Output " "
+exit
 # see also https://msdn.microsoft.com/en-us/library/azure/mt704041.aspx
 
 # read the environment variables
@@ -14,52 +45,52 @@ if ( ($Tenant -eq $null) -or ($ClientID -eq $null) -or ($ClientSecret -eq $null)
 }
 
 
-$Token = Invoke-RestMethod -Uri https://login.microsoftonline.com/$tenant/oauth2/token?api-version=1.0 -Method Post -Body @{"grant_type" = "client_credentials"; "resource" = "https://management.core.windows.net/"; "client_id" = $ClientID; "client_secret" = $ClientSecret}
+$Token = Invoke-RestMethod -Uri https://login.microsoftonline.com/$tenant/oauth2/token?api-version=1.0 -Method Post -Body @{"grant_type" = "client_credentials"; "Resource" = "https://management.core.windows.net/"; "client_id" = $ClientID; "client_secret" = $ClientSecret}
 
-$subscriptionArray = $subscriptions -split ','
+$SubscriptionArray = $Subscriptions -split ','
 
-$header = @{ 'authorization'="Bearer $($Token.access_token)" }
+$Header = @{ 'authorization'="Bearer $($Token.access_token)" }
 
 # Iterate over the subscriptions
 foreach ($SubscriptionID in $subscriptionArray)
 {
 
-  Write-Host "Scanning subscription $($SubscriptionID)"
+  Write-Output "Scanning subscription $($SubscriptionID)"
 
   # we query security statuses
-  $SubscriptionURI  = "https://management.azure.com/subscriptions/$SubscriptionID/providers/microsoft.Security/securityStatuses" +'?api-version=2015-06-01-preview'
+  $SecurityStateURI  = "https://management.azure.com/subscriptions/$SubscriptionID/providers/microsoft.Security/securityStatuses" +'?api-version=2015-06-01-preview'
 
   try
   {
-    $Request = Invoke-RestMethod -Uri $SubscriptionURI -Headers $header -ContentType 'application/x-www-form-urlencoded'
+    $Request = Invoke-RestMethod -Uri $SecurityStateURI -Headers $Header -ContentType 'application/x-www-form-urlencoded'
   }
   catch
   {
-    Write-Host "StatusCode:" $_.Exception.Response.StatusCode.value__ -Foreground 'red'
-    Write-Host "StatusDescription:" $_.Exception.Response.StatusDescription -Foreground 'red'
+    Write-Output "StatusCode:" $_.Exception.Response.StatusCode.value__ -Foreground 'red'
+    Write-Output "StatusDescription:" $_.Exception.Response.StatusDescription -Foreground 'red'
     continue
   }
   #Write-Host "Status"
   #$Request
 
   # Iterate over the result set
-  foreach ($element in $Request.value)
+  foreach ($Element in $Request.value)
   {
-    # element.id is a concatenation of elements that are either constant of specific (see here: https://msdn.microsoft.com/en-us/library/azure/mt704041.aspx)
+    # Element.id is a concatenation of Elements that are either constant of specific (see here: https://msdn.microsoft.com/en-us/library/azure/mt704041.aspx)
     # we are interested in:
     # - the subscription id: [2]
-    # - the resource group name: [4]
-    # - the resource type: [6]+[7]
-    # - the resourcen name: [last]
-    $resource = $element.id -split '/'
+    # - the Resource group name: [4]
+    # - the Resource type: [6]+[7]
+    # - the Resourcen name: [last]
+    $Resource = $Element.id -split '/'
 
     # Skip everything that is not a VM
-    if ($resource[6] -ne "Microsoft.Compute" -or $resource[-1] -eq "") { continue; }
+    if ($Resource[6] -ne "Microsoft.Compute" -or $Resource[-1] -eq "") { continue; }
 
-    Write-Host "  rg=$($resource[4]) type=$($resource[6])/$($resource[7]) name=$($resource[-1])"
+    Write-Output "  rg=$($Resource[4]) type=$($Resource[6])/$($Resource[7]) name=$($Resource[-1])"
 
     # Test patch status
-    if ($element.properties.patchscannerdata -ne $null)
+    if ($Element.properties.patchscannerdata -ne $null)
     {
       # This is how the data looks like (*) marked items are interesting to us
       # (*) rebootPendingSecurityState  : Healthy
@@ -70,86 +101,83 @@ foreach ($SubscriptionID in $subscriptionArray)
       #     dataExists                  : True
       # (*) securityState               : Healthy
       #     lastReportTime              : 2017-02-11T05:29:09.67
-      #$element.id
-     	#$element.name
+      #$Element.id
+     	#$Element.name
 
-      $rebootPending = ($element.properties.patchscannerdata.rebootPendingSecurityState -ne "Healthy")
-      $missingPatches = ($element.properties.patchscannerdata.missingPatchesSecurityState -ne "Healthy")
-      $securityState = ($element.properties.patchscannerdata.securityState -ne "Healthy")
+      $RebootPending = ($Element.properties.patchscannerdata.rebootPendingSecurityState -ne "Healthy")
+      $MissingPatches = ($Element.properties.patchscannerdata.missingPatchesSecurityState -ne "Healthy")
+      $SecurityState = ($Element.properties.patchscannerdata.securityState -ne "Healthy")
 
       # Parse lastReportTime
-      $template = 'yyyy-MM-dd'
-      $lastReportDate = $element.properties.patchscannerdata.lastReportTime.Split("T")[0]
-      $lastReportTime = [DateTime]::ParseExact($lastReportDate, $template, $null)
-      $timeSpan = [System.DateTime]::Now - [DateTime]$lastReportTime;
-      $age = $timeSpan.TotalDays
+      $Template = 'yyyy-MM-dd'
+      $LastReportDate = $Element.properties.patchscannerdata.lastReportTime.Split("T")[0]
+      $LastReportTime = [DateTime]::ParseExact($LastReportDate, $Template, $null)
+      $TimeSpan = [System.DateTime]::Now - [DateTime]$LastReportTime;
+      $Age = $TimeSpan.TotalDays
 
-      Write-Host "    Patch Status: " -NoNewLine
-      $color = 'green';
-      $status = "OK";
-      if ($rebootPending) { $color='red'; $status = "FAIL"; } else {$color='green'; $status="PASS"; }
-      Write-Host reboot pending: $status -Foreground $color -NoNewLine
+      $Color = 'green';
+      $Status = "OK";
+      if ($RebootPending) { $Color='red'; $Status = "FAIL"; } else {$Color='green'; $Status="PASS"; }
 
-      Write-Host " | " -NoNewLine
+      Write-Output "    Patch Status:"
+      Write-Output "      reboot pending: $($Status)"
 
       # We want to check if the VM is running
-      $resourceName = ($element.id -split("/providers/Microsoft.Security"))[0]
+      $ResourceName = ($Element.id -split("/providers/Microsoft.Security"))[0]
 
 
       # we query the VM status
       # see https://docs.microsoft.com/en-us/rest/api/compute/virtualmachines/virtualmachines-get
-      $vmURI  = "https://management.azure.com" + $resourceName + '/InstanceView?api-version=2017-03-30'
-      #Write-Host "Checking VM: " $vmURI
+      $VmInfoURI  = "https://management.azure.com" + $ResourceName + '/InstanceView?api-version=2017-03-30'
+      #Write-Host "Checking VM: " $VmInfoURI
 
-      $vmState = 'unknown'
+      $VmState = 'unknown'
 
       try
       {
-        $Response = Invoke-RestMethod -Uri $vmURI -Headers $header -ContentType 'application/x-www-form-urlencoded'
-        if ($Response.statuses[1].code -eq "PowerState/running") {$vmState = "running"} else {$vmState = "stopped"}
+        $Response = Invoke-RestMethod -Uri $VmInfoURI -Headers $Header -ContentType 'application/x-www-form-urlencoded'
+        if ($Response.statuses[1].code -eq "PowerState/running") {$VmState = "running"} else {$VmState = "stopped"}
       }
       catch
       {
-        Write-Host "StatusCode:" $_.Exception.Response.StatusCode.value__ -Foreground 'red'
-        Write-Host "StatusDescription:" $_.Exception.Response.StatusDescription -Foreground 'red'
+        Write-Error "StatusCode:" $_.Exception.Response.StatusCode.value__ -Foreground 'red'
+        Write-Error "StatusDescription:" $_.Exception.Response.StatusDescription -Foreground 'red'
       }
 
       # if the vm is stopped we do not report a violation
-      if ($vmState -ne "stopped")
+      if ($VmState -ne "stopped")
       {
-        if ($missingPatches) { $color='red'; $status = "FAIL"; } else {$color='green'; $status = "PASS"; }
-        Write-Host missing patches: $status -Foreground $color -NoNewLine
+        if ($MissingPatches) { $Color='red'; $Status = "FAIL"; } else {$Color='green'; $Status = "PASS"; }
+        #Write-Host missing patches: $Status -Foreground $Color -NoNewLine
+        Write-Output "      missing patches: $($Status)"
 
-        Write-Host " | " -NoNewLine
+        if ($SecurityState) { $Color='red'; $Status = "FAIL"; } else {$Color='green'; $Status = "PASS"; }
+        Write-Output "      security state: $($Status)"
 
-        if ($securityState) { $color='red'; $status = "FAIL"; } else {$color='green'; $status = "PASS"; }
-        Write-Host security state: $status -Foreground $color -NoNewLine
-
-        if ($missingPatches)
+        if ($MissingPatches)
         {
           # we need to take action and stop the VM
-          $vmStopURI  = "https://management.azure.com" + $resourceName + '/powerOff?api-version=2016-04-30-preview'
+          $VmStopURI  = "https://management.azure.com" + $ResourceName + '/powerOff?api-version=2016-04-30-preview'
           try
           {
-            $Response = Invoke-RestMethod -Method Post -Uri $vmStopURI -Headers $header -ContentType 'application/x-www-form-urlencoded'
-            Write-Host ">>> Action taken: VM was stopped!" -Foreground 'red'
+            $Response = Invoke-RestMethod -Method Post -Uri $VmStopURI -Headers $Header -ContentType 'application/x-www-form-urlencoded'
+            Write-Output ">>> Action taken: VM was stopped!"
           }
           catch
           {
-            Write-Host "StatusCode:" $_.Exception.Response.StatusCode.value__ -Foreground 'red'
-            Write-Host "StatusDescription:" $_.Exception.Response.StatusDescription -Foreground 'red'
+            Write-Error "StatusCode:" $_.Exception.Response.StatusCode.value__ -Foreground 'red'
+            Write-Error "StatusDescription:" $_.Exception.Response.StatusDescription -Foreground 'red'
           }
         }
       }
       else
       {
-        Write-Host "missing patches: VM state is $($vmState). Ignoring" -Foreground 'yellow' -NoNewLine
+        Write-Output "      missing patches: VM state is $($VmState). Ignoring"
       }
-      Write-Host
     }
 
     # Test vulnerability assesement status
-    if ($false) # ($element.properties.vulnerabilityAssessmentScannerStatus -ne $null)
+    if ($false) # ($Element.properties.vulnerabilityAssessmentScannerStatus -ne $null)
     {
       # This is how the data looks like (*) marked items are interesting to us
       # (*) isSupported        : False
@@ -159,24 +187,20 @@ foreach ($SubscriptionID in $subscriptionArray)
       #     dataExists         : False
       # (*) securityState      : None
       #     lastReportTime     : 0001-01-01T00:00:00
-      #$element.id
-     	#$element.name
-      #$element.properties.vulnerabilityAssessmentScannerStatus
-      #$element.properties.vulnerabilityAssessmentScannerStatus.securityState
-      $supportedPass = ($element.properties.vulnerabilityAssessmentScannerStatus.isSupported -eq "True")
-      $securityStatePass = ($element.properties.vulnerabilityAssessmentScannerStatus.securityState -eq "Healthy")
-      Write-Host "    Vuln Scan: " -NoNewLine
-      $color = 'green';
-      $status = "OK";
-      if ($supportedPass) {$color='green'; $status="PASS"; } else { $color='red'; $status = "FAIL"; }
-      Write-Host vulnerability scan supported: $status -Foreground $color -NoNewLine
+      #$Element.id
+     	#$Element.name
+      #$Element.properties.vulnerabilityAssessmentScannerStatus
+      #$Element.properties.vulnerabilityAssessmentScannerStatus.securityState
+      $SupportedPass = ($Element.properties.vulnerabilityAssessmentScannerStatus.isSupported -eq "True")
+      $SecurityStatePass = ($Element.properties.vulnerabilityAssessmentScannerStatus.securityState -eq "Healthy")
+      Write-Output "    Vuln Scan: "
+      $Color = 'green';
+      $Status = "OK";
+      if ($SupportedPass) {$Color='green'; $Status="PASS"; } else { $Color='red'; $Status = "FAIL"; }
+      Write-Output "      vulnerability scan supported: $($Status)"
 
-      Write-Host " | " -NoNewLine
-
-      if ($securityStatePass) {$color='green'; $status = "PASS"; } else { $color='red'; $status = "FAIL"; }
-      Write-Host security state: $status -Foreground $color -NoNewLine
-
-      Write-Host
+      if ($SecurityStatePass) {$Color='green'; $Status = "PASS"; } else { $Color='red'; $Status = "FAIL"; }
+      Write-Output "      security state: $($Status)"
 
     }
   }
