@@ -12,7 +12,9 @@
        - ClientSecret     The secret of the service principal
        - Subscriptions    A comma separated list of all subscriptions to process
        - RunMode          (default) 0 is passive, 1 is agressive
-       - 
+       - SlackURL         Can be empty, in that case nothing will get sent to slack. We use this implementation: https://github.com/asksven/azure-functions-slack-bot
+       - SlackChannel     Can be empty, default will be used in that case
+
 .NOTES
      Author     : asksven - sven.knispel@mail.com
 .LINK
