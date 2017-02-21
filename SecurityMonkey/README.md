@@ -17,6 +17,11 @@ Following environment variables must be set:
 - `ClientID`      : the service principal's client-id 
 - `ClientSecret`  : the service principal's secret
 - `Subscriptions` : a comma-delimited list of subscription IDs to be scanned (the service principal must have at least reader access to those)
+- `RunMode`       : (default) 0 is passive, 1 is agressive
+- `SlackURL`      : can be empty, in that case nothing will get sent to slack. We use this implementation: https://github.com/asksven/azure-functions-slack-bot
+- `SlackChannel`  : can be empty, default will be used in that case
+
+
 
 ## Usage
 
