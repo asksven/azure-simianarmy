@@ -25,6 +25,9 @@ Set-StrictMode -Version Latest
 
 $Version="1.0.0"
 
+# Hack: see https://social.msdn.microsoft.com/Forums/en-US/460eea23-3082-4b26-a3a4-38757d70853c/powershell-webjobs-and-kudu-powershell-these-dont-support-progress-bars-so-fail-on-many-commands?forum=windowsazurewebsitespreview
+$ProgressPreference="SilentlyContinue" # make sure no-one tries to show a progress-bar
+
 Write-Output " "
 Write-Output " _____                      _ _        ___  ___            _              "
 Write-Output "/  ___|                    (_) |       |  \/  |           | |             "
@@ -176,8 +179,6 @@ foreach ($SubscriptionID in $subscriptionArray)
         }
         catch
         {
-          Write-Host $_.Exception
-
           Write-Warning "StatusCode: $($_.Exception.Response.StatusCode.value__)"
           Write-Warning "StatusDescription: $($_.Exception.Response.StatusDescription)"
           $ErrorsArray += "Could not restart resource $($ShortName): $($_.Exception.Response.StatusCode.value__) : $($_.Exception.Response.StatusDescription)"
@@ -339,7 +340,6 @@ if ($SlackURL -ne $null)
 
   $body += '] }'
 
-  Write-Host $body
   Invoke-RestMethod $SlackURL -Body $body -Method Post -ContentType 'application/json'
 }
 
