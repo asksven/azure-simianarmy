@@ -10,7 +10,7 @@ In the future I may look into scanning apps for known framework vulnerabilities.
 ## Setup
 
 In order to run Security Monkey you must have set-up a service principal in your AAD and have granted permissions to the principal in your subscription(s).
-At this time Security Monkey is only scanning your subscriptions: the service principal requires "Reader" permissions.
+At this time Security Monkey is only scanning your subscriptions: the service principal requires "Reader" permissions for `RunMode=0` and "Owner" for `RunMode=1`.
 
 Following environment variables must be set:
 - `Tenant`        : the AAD tenant ID
@@ -21,7 +21,7 @@ Following environment variables must be set:
 - `SlackURL`      : can be empty, in that case nothing will get sent to slack. We use this implementation: https://github.com/asksven/azure-functions-slack-bot
 - `SlackChannel`  : can be empty, default will be used in that case
 
-
+SecurityMonkey can be run from the command-line but also as an Azure App WebJob. Do do so just create a zipfile containing `getSecurityState.ps1` (in the root) and deploy the zipfile to a WebJob.
 
 ## Usage
 
