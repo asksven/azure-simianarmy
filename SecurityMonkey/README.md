@@ -21,7 +21,15 @@ Following environment variables must be set:
 - `SlackURL`      : can be empty, in that case nothing will get sent to slack. We use this implementation: https://github.com/asksven/azure-functions-slack-bot
 - `SlackChannel`  : can be empty, default will be used in that case
 
-SecurityMonkey can be run from the command-line but also as an Azure App WebJob. Do do so just create a zipfile containing `getSecurityState.ps1` (in the root) and deploy the zipfile to a WebJob.
+SecurityMonkey can be run from the command-line but also as an Azure App WebJob. 
+
+### Running as Azure WebJob
+
+1. Create an AzureApp
+2. Make sure to turn it to `Always On` in the Application Settings if you want to run it on a schedule
+2. Create a zipfile containing `getSecurityState.ps1` (in the root)
+3. Deploy the zipfile to a WebJob.
+4. Set the schedule (expression is `{second} {minute} {hour} {day} {month} {day of the week}.`). See here for details: http://stackoverflow.com/questions/37836520/azure-webjob-not-accepting-a-valid-cron-expression
 
 ## Usage
 
