@@ -1,3 +1,4 @@
 test.ps1
 setEnv.ps1
 *.zip
+npm-debug.log
