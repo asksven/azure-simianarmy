@@ -23,7 +23,7 @@
 
 Set-StrictMode -Version Latest
 
-$Version="1.0.0"
+$Version="1.0.1"
 
 # Hack: see https://social.msdn.microsoft.com/Forums/en-US/460eea23-3082-4b26-a3a4-38757d70853c/powershell-webjobs-and-kudu-powershell-these-dont-support-progress-bars-so-fail-on-many-commands?forum=windowsazurewebsitespreview
 $ProgressPreference="SilentlyContinue" # make sure no-one tries to show a progress-bar
@@ -176,6 +176,7 @@ foreach ($SubscriptionID in $subscriptionArray)
         {
           $Response = Invoke-RestMethod -Method Post -Uri $VmRestartURI -Headers $Header -ContentType 'application/x-www-form-urlencoded'
           $RestartedVms += 1
+          $ActionsArray += "$($ShortName) was rebooted"
         }
         catch
         {
@@ -217,7 +218,7 @@ foreach ($SubscriptionID in $subscriptionArray)
         if ($MissingPatches)
         {
           $Status = "FAIL"
-          $FindingsArray += "$($ShortName) has has patches missing"
+          $FindingsArray += "$($ShortName) has patches missing"
         }
         else
         {
@@ -230,7 +231,7 @@ foreach ($SubscriptionID in $subscriptionArray)
         if ($SecurityState) { $Color='red'; $Status = "FAIL"; } else {$Color='green'; $Status = "PASS"; }
         Write-Output "      security state: $($Status)"
 
-        # if $RunMode is agressice we need to take action and stop the VM
+        # if $RunMode is agressive we need to take action and stop the VM
         if ( ($MissingPatches) -and ($RunMode -eq 1) )
         {
           $VmStopURI  = "https://management.azure.com" + $ResourceName + '/powerOff?api-version=2016-04-30-preview'
@@ -239,6 +240,7 @@ foreach ($SubscriptionID in $subscriptionArray)
             $Response = Invoke-RestMethod -Method Post -Uri $VmStopURI -Headers $Header -ContentType 'application/x-www-form-urlencoded'
             Write-Output ">>> Action taken: VM was stopped!"
             $StoppedVMs += 1
+            $ActionsArray += "$($ShortName) was stopped"
           }
           catch
           {
