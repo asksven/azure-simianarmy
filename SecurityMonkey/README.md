@@ -7,6 +7,13 @@ In the future I may look into scanning apps for known framework vulnerabilities.
 `getSecurityState.ps1` scans the given enviroment for security weaknesses
 `queryData.ps1` is a helper dumping the JSON data returned by the Security Center API
 
+## Features
+- Checks for VMs in an unpatched state and stops them (if `RunMode` is set to agressive)
+- Checks for VMs waiting for reboot and reboots them (if `RunMode` is set to agressive)
+- Checks certificates of Azure Webapps for expiration and warns if they expire in the next 60 days
+- Checks Storage Accounts not being encrypted and warns about them (in the future it will be enforced)
+- Checks Azure SQL Database not having TDE enabled and warns about them (in the future it will be enforced)
+
 ## Setup
 
 In order to run Security Monkey you must have set-up a service principal in your AAD and have granted permissions to the principal in your subscription(s).
@@ -20,6 +27,8 @@ Following environment variables must be set:
 - `RunMode`       : (default) 0 is passive, 1 is agressive
 - `SlackURL`      : can be empty, in that case nothing will get sent to slack. We use this implementation: https://github.com/asksven/azure-functions-slack-bot
 - `SlackChannel`  : can be empty, default will be used in that case
+- `FF_Certs`      : a feature flag (default) 1 is checking, can be disabled by setting it to 0
+
 
 SecurityMonkey can be run from the command-line but also as an Azure App WebJob. 
 
