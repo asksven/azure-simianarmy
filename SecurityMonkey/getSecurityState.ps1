@@ -14,6 +14,8 @@
        - RunMode          (default) 0 is passive, 1 is agressive
        - SlackURL         Can be empty, in that case nothing will get sent to slack. We use this implementation: https://github.com/asksven/azure-functions-slack-bot
        - SlackChannel     Can be empty, default will be used in that case
+       # Feature flags
+       - FF_Certs         (default) 1 is checking, can be disabled by setting it to 0
 
 .NOTES
      Author     : asksven - sven.knispel@mail.com
@@ -23,7 +25,7 @@
 
 Set-StrictMode -Version Latest
 
-$Version="1.0.1"
+$Version="1.1.0"
 
 # Hack: see https://social.msdn.microsoft.com/Forums/en-US/460eea23-3082-4b26-a3a4-38757d70853c/powershell-webjobs-and-kudu-powershell-these-dont-support-progress-bars-so-fail-on-many-commands?forum=windowsazurewebsitespreview
 $ProgressPreference="SilentlyContinue" # make sure no-one tries to show a progress-bar
@@ -52,12 +54,18 @@ $Subscriptions    = $Env:Subscriptions
 $RunMode          = $Env:Runmode # can be 0 (passive) or 1 (agressive), if undefined 0
 $SlackURL         = $Env:SlackUrl # can be empty, in that case nothing will get sent to slack
 $SlackChannel     = $Env:SlackChannel # can be empty, default will be used in that case
+$FF_Certs         = $Env:FF_Certs 
+
 
 # Counters
 $ScannedSubscriptions = 0
 $ScannedVMs           = 0
 $StoppedVMs           = 0
 $RestartedVms         = 0
+$ScannedAzureApps     = 0
+$ScannedAzureSqlDbs   = 0
+$ScannedStorageAccts  = 0
+$ScannedCerts         = 0
 
 # Action, error and Findings arrays
 $ActionsArray = @()
@@ -69,6 +77,16 @@ if ( ($Tenant -eq $null) -or ($ClientID -eq $null) -or ($ClientSecret -eq $null)
 {
   Write-Output "Environment variables Tenant, ClientID, ClientSecret and Subscriptions must be set"
   exit
+}
+
+if ( ($FF_Certs -eq $null) -or ($FF_Certs -ne 0))
+{
+  $FF_Certs = 1
+}
+else
+{
+  $FF_Certs = 0  
+  $ActionsArray += "FF_Certs was set to 0: disabled"
 }
 
 if ( ($RunMode -eq $null) -or ($Runmode -lt 0) -or ($runMode -gt 1) )
@@ -89,6 +107,72 @@ foreach ($SubscriptionID in $subscriptionArray)
 {
   $ScannedSubscriptions += 1
   Write-Output "Scanning subscription $($SubscriptionID)"
+
+  if ($FF_Certs -eq 1)
+  {
+    # we query websites
+    $ListWebSitesURI  = "https://management.azure.com/subscriptions/$SubscriptionID/providers/microsoft.Web/sites" +'?api-version=2015-08-01'
+    try
+    {
+      # see https://docs.microsoft.com/en-us/rest/api/appservice/webapps#WebApps_List
+      Write-Host scanning web application
+      $Request = Invoke-RestMethod -Uri $ListWebSitesURI -Headers $Header -ContentType 'application/x-www-form-urlencoded'
+
+      # Iterate over the result set
+      foreach ($Element in $Request.value)  
+      {
+        $minimumCertAgeDays = 60
+        $timeoutMilliseconds = 10000
+
+        foreach ($entry in $Element.properties.hostNames)
+        {
+          $ScannedCerts += 1
+
+          $url = "https://" + $entry
+          Write-Host "  Checking $($url)"
+          $req = [Net.HttpWebRequest]::Create($url)
+          $req.Timeout = $timeoutMilliseconds
+          try
+          {
+            $req.GetResponse() |Out-Null
+          }
+          catch
+          {
+            #Write-Host Exception while checking URL $url`: $_
+          }
+
+          $expiration = $req.ServicePoint.Certificate.GetExpirationDateString().Split(" ")[0]
+          $Template = 'dd.MM.yyyy'
+          $ExpirationDate = [DateTime]::ParseExact($expiration, $Template, $null)
+          $TimeSpan = [DateTime]$ExpirationDate - [System.DateTime]::Now;
+          $certExpiresIn = $TimeSpan.TotalDays
+
+          $certName = $req.ServicePoint.Certificate.GetName()
+          $certPublicKeyString = $req.ServicePoint.Certificate.GetPublicKeyString()
+          $certSerialNumber = $req.ServicePoint.Certificate.GetSerialNumberString()
+          $certThumbprint = $req.ServicePoint.Certificate.GetCertHashString()
+          $certEffectiveDate = $req.ServicePoint.Certificate.GetEffectiveDateString()
+          $certIssuer = $req.ServicePoint.Certificate.GetIssuerName()
+
+          if ($certExpiresIn -gt $minimumCertAgeDays)
+          {
+            Write-Host "    PASS"
+          }
+          else
+          {
+            Write-Host "    Cert for site $($url) expires in $($certExpiresIn) days on $($expiration). Threshold is $($minimumCertAgeDays) days" 
+            $FindingsArray += "Certificate for $($url) expires in less than $($minimumCertAgeDays) on $($expiration)"
+
+          }
+        }
+      }
+    }
+    catch
+    {
+      Write-Warning -Message "Exception: $($_.Exception)"
+
+    }
+  }  
 
   # we query security statuses
   $SecurityStateURI  = "https://management.azure.com/subscriptions/$SubscriptionID/providers/microsoft.Security/securityStatuses" +'?api-version=2015-06-01-preview'
@@ -115,184 +199,242 @@ foreach ($SubscriptionID in $subscriptionArray)
     # - the subscription id: [2]
     # - the Resource group name: [4]
     # - the Resource type: [6]+[7]
-    # - the Resourcen name: [last]
+    # - the Resource name: [last]
     $Resource = $Element.id -split '/'
 
-    # Skip everything that is not a VM
-    if ($Resource[6] -ne "Microsoft.Compute" -or $Resource[-1] -eq "") { continue; }
-
-    $ScannedVMs += 1
+    # Skip everything that is not a VM, an Azure SQL, a Storage Account or an Azure App
+    if (($Resource[6] -ne "Microsoft.Compute" -and $Resource[6] -ne "Microsoft.Sql" -and $Resource[6] -ne "Microsoft.Storage" -and $Resource[6] -ne "Microsoft.Web") -or $Resource[-1] -eq "") { continue; }
 
     $ShortName = "rg=$($Resource[4]) type=$($Resource[6])/$($Resource[7]) name=$($Resource[-1])"
     Write-Output "  $($ShortName)"
 
-    # Test patch status
-    if ($Element.properties.patchscannerdata -ne $null)
+    if ($Resource[6] -eq "Microsoft.Storage")
     {
-      # This is how the data looks like (*) marked items are interesting to us
-      # (*) rebootPendingSecurityState  : Healthy
-      # (*) missingPatchesSecurityState : Healthy
-      #     dataType                    : Patch
-      #     isScannerDataValid          : True
-      #     policy                      : On
-      #     dataExists                  : True
-      # (*) securityState               : Healthy
-      #     lastReportTime              : 2017-02-11T05:29:09.67
-      #$Element.id
-     	#$Element.name
-
-      $RebootPending = ($Element.properties.patchscannerdata.rebootPendingSecurityState -ne "Healthy")
-      $MissingPatches = ($Element.properties.patchscannerdata.missingPatchesSecurityState -ne "Healthy")
-      $SecurityState = ($Element.properties.patchscannerdata.securityState -ne "Healthy")
-
-      # Parse lastReportTime
-      $Template = 'yyyy-MM-dd'
-      $LastReportDate = $Element.properties.patchscannerdata.lastReportTime.Split("T")[0]
-      $LastReportTime = [DateTime]::ParseExact($LastReportDate, $Template, $null)
-      $TimeSpan = [System.DateTime]::Now - [DateTime]$LastReportTime;
-      $Age = $TimeSpan.TotalDays
-
-      $Color = 'green';
-      $Status = "OK";
-      if ($RebootPending)
+      # we toss a coin and 
+      if ((get-random -maximum 10) -le 3)
       {
-        $Status = "FAIL";
-        $FindingsArray += "$($ShortName) has a reboot pending"
-      } 
-      else
-      {
-        $Status="PASS";
+        $ScannedStorageAccts += 1
+
+        # Test storage encryptionpatch status
+        $SecurityState = ($Element.properties.encrypted -eq $false)
+
+        if ($SecurityState) { $Status = "FAIL"; } else { $Status = "PASS"; }
+
+        Write-Output "    Encryption Status:"
+
+        Write-Output "      security state: $($Status)"
+        if ($Status -eq "FAIL")
+        {
+          $FindingsArray += "$($ShortName) is not encrypted. I may start enforcing this soon"
+        }
       }
+      else { Write-Host "    Randomly skipped"}
+    }
 
-      Write-Output "    Patch Status:"
-      Write-Output "      reboot pending: $($Status)"
+    if ($Resource[6] -eq "Microsoft.Web")
+    {
+      # Websites are currently not implemented so there is noting to do
+    }
 
-      # if reboot s pending reboot the VM (if $RunMode is "agressive")
-      if ( ($RebootPending) -and ($Runmode -eq 1) )
+
+    if ($Resource[6] -eq "Microsoft.Sql")
+    {
+      # there are SQL Server and databases and we are only interested in the latter
+      if ($Resource[9] -eq "databases")
       {
-        # see https://docs.microsoft.com/en-us/rest/api/compute/virtualmachines/virtualmachines-restart
-        $VmRestartURI  = "https://management.azure.com" + $ResourceName + '/restart?api-version=2016-04-30-preview'
+        if ((get-random -maximum 10) -le 3)
+        {
+
+          $ScannedAzureSqlDbs += 1
+          $SecurityState = ($Element.properties.tdeStatus -ne "High")
+          if ($SecurityState) { $Status = "FAIL"; } else { $Status = "PASS"; }
+          Write-Output "    TDE Status:"
+
+          Write-Output "      security state: $($Status)"
+          if ($Status -eq "FAIL")
+          {
+            $FindingsArray += "$($ShortName) has no TDE enabled. I may start enforcing this soon"
+          }
+        }
+        else { Write-Host "    Randomly skipped"}
+      }
+    }
+
+    if ($Resource[6] -eq "Microsoft.Compute")
+    {
+      $ScannedVMs += 1
+
+
+      # Test patch status
+      if ($Element.properties.patchscannerdata -ne $null)
+      {
+        # This is how the data looks like (*) marked items are interesting to us
+        # (*) rebootPendingSecurityState  : Healthy
+        # (*) missingPatchesSecurityState : Healthy
+        #     dataType                    : Patch
+        #     isScannerDataValid          : True
+        #     policy                      : On
+        #     dataExists                  : True
+        # (*) securityState               : Healthy
+        #     lastReportTime              : 2017-02-11T05:29:09.67
+        #$Element.id
+        #$Element.name
+
+        $RebootPending = ($Element.properties.patchscannerdata.rebootPendingSecurityState -ne "Healthy")
+        $MissingPatches = ($Element.properties.patchscannerdata.missingPatchesSecurityState -ne "Healthy")
+        $SecurityState = ($Element.properties.patchscannerdata.securityState -ne "Healthy")
+
+        # Parse lastReportTime
+        $Template = 'yyyy-MM-dd'
+        $LastReportDate = $Element.properties.patchscannerdata.lastReportTime.Split("T")[0]
+        $LastReportTime = [DateTime]::ParseExact($LastReportDate, $Template, $null)
+        $TimeSpan = [System.DateTime]::Now - [DateTime]$LastReportTime;
+        $Age = $TimeSpan.TotalDays
+
+        $Color = 'green';
+        $Status = "OK";
+        if ($RebootPending)
+        {
+          $Status = "FAIL";
+          $FindingsArray += "$($ShortName) has a reboot pending"
+        } 
+        else
+        {
+          $Status="PASS";
+        }
+
+        Write-Output "    Patch Status:"
+        Write-Output "      reboot pending: $($Status)"
+
+        # if reboot s pending reboot the VM (if $RunMode is "agressive")
+        if ( ($RebootPending) -and ($Runmode -eq 1) )
+        {
+          # see https://docs.microsoft.com/en-us/rest/api/compute/virtualmachines/virtualmachines-restart
+          $VmRestartURI  = "https://management.azure.com" + $ResourceName + '/restart?api-version=2016-04-30-preview'
+          try
+          {
+            $Response = Invoke-RestMethod -Method Post -Uri $VmRestartURI -Headers $Header -ContentType 'application/x-www-form-urlencoded'
+            $RestartedVms += 1
+            $ActionsArray += "$($ShortName) was rebooted"
+          }
+          catch
+          {
+            Write-Warning "StatusCode: $($_.Exception.Response.StatusCode.value__)"
+            Write-Warning "StatusDescription: $($_.Exception.Response.StatusDescription)"
+            $ErrorsArray += "Could not restart resource $($ShortName): $($_.Exception.Response.StatusCode.value__) : $($_.Exception.Response.StatusDescription)"
+          }
+          
+        }
+
+        # We want to check if the VM is running
+        $ResourceName = ($Element.id -split("/providers/Microsoft.Security"))[0]
+
+
+        # we query the VM status
+        # see https://docs.microsoft.com/en-us/rest/api/compute/virtualmachines/virtualmachines-get
+        $VmInfoURI  = "https://management.azure.com" + $ResourceName + '/InstanceView?api-version=2017-03-30'
+        #Write-Host "Checking VM: " $VmInfoURI
+
+        $VmState = 'unknown'
+
         try
         {
-          $Response = Invoke-RestMethod -Method Post -Uri $VmRestartURI -Headers $Header -ContentType 'application/x-www-form-urlencoded'
-          $RestartedVms += 1
-          $ActionsArray += "$($ShortName) was rebooted"
+          $Response = Invoke-RestMethod -Uri $VmInfoURI -Headers $Header -ContentType 'application/x-www-form-urlencoded'
+    
+          if ($Response.statuses[1].code -eq "PowerState/running") {$VmState = "running"} else {$VmState = "stopped"}
         }
         catch
         {
           Write-Warning "StatusCode: $($_.Exception.Response.StatusCode.value__)"
           Write-Warning "StatusDescription: $($_.Exception.Response.StatusDescription)"
-          $ErrorsArray += "Could not restart resource $($ShortName): $($_.Exception.Response.StatusCode.value__) : $($_.Exception.Response.StatusDescription)"
+          $ErrorsArray += "Could not access info for $($ShortName): $($_.Exception.Response.StatusCode.value__) : $($_.Exception.Response.StatusDescription)"
+
         }
-        
-      }
 
-      # We want to check if the VM is running
-      $ResourceName = ($Element.id -split("/providers/Microsoft.Security"))[0]
-
-
-      # we query the VM status
-      # see https://docs.microsoft.com/en-us/rest/api/compute/virtualmachines/virtualmachines-get
-      $VmInfoURI  = "https://management.azure.com" + $ResourceName + '/InstanceView?api-version=2017-03-30'
-      #Write-Host "Checking VM: " $VmInfoURI
-
-      $VmState = 'unknown'
-
-      try
-      {
-        $Response = Invoke-RestMethod -Uri $VmInfoURI -Headers $Header -ContentType 'application/x-www-form-urlencoded'
-  
-        if ($Response.statuses[1].code -eq "PowerState/running") {$VmState = "running"} else {$VmState = "stopped"}
-      }
-      catch
-      {
-        Write-Warning "StatusCode: $($_.Exception.Response.StatusCode.value__)"
-        Write-Warning "StatusDescription: $($_.Exception.Response.StatusDescription)"
-        $ErrorsArray += "Could not access info for $($ShortName): $($_.Exception.Response.StatusCode.value__) : $($_.Exception.Response.StatusDescription)"
-
-      }
-
-      # if the vm is stopped we do not report a violation
-      if ($VmState -ne "stopped")
-      {
-        if ($MissingPatches)
+        # if the vm is stopped we do not report a violation
+        if ($VmState -ne "stopped")
         {
-          $Status = "FAIL"
-          $FindingsArray += "$($ShortName) has patches missing"
+          if ($MissingPatches)
+          {
+            $Status = "FAIL"
+            $FindingsArray += "$($ShortName) has patches missing"
+          }
+          else
+          {
+            $Status = "PASS"
+          }
+
+          #Write-Host missing patches: $Status -Foreground $Color -NoNewLine
+          Write-Output "      missing patches: $($Status)"
+
+          if ($SecurityState) { $Status = "FAIL"; } else { $Status = "PASS"; }
+          Write-Output "      security state: $($Status)"
+
+          # if $RunMode is agressive we need to take action and stop the VM
+          if ( ($MissingPatches) -and ($RunMode -eq 1) )
+          {
+            $VmStopURI  = "https://management.azure.com" + $ResourceName + '/powerOff?api-version=2016-04-30-preview'
+            try
+            {
+              $Response = Invoke-RestMethod -Method Post -Uri $VmStopURI -Headers $Header -ContentType 'application/x-www-form-urlencoded'
+              Write-Output ">>> Action taken: VM was stopped!"
+              $StoppedVMs += 1
+              $ActionsArray += "$($ShortName) was stopped"
+            }
+            catch
+            {
+              Write-Warning -Message "StatusCode: $($_.Exception.Response.StatusCode.value__)"
+              Write-Warning -Message "StatusDescription: $($_.Exception.Response.StatusDescription)"
+              $ErrorsArray += "Could not stop resource $($ShortName): $($_.Exception.Response.StatusCode.value__) : $($_.Exception.Response.StatusDescription)"
+
+            }
+          }
         }
         else
         {
-          $Status = "PASS"
+          Write-Output "      missing patches: VM state is $($VmState). Ignoring"
         }
+      }
 
-        #Write-Host missing patches: $Status -Foreground $Color -NoNewLine
-        Write-Output "      missing patches: $($Status)"
+      # Test vulnerability assesement status
+      if ($false) # ($Element.properties.vulnerabilityAssessmentScannerStatus -ne $null)
+      {
+        # This is how the data looks like (*) marked items are interesting to us
+        # (*) isSupported        : False
+        #     dataType           : VulnerabilityAssessment
+        #     isScannerDataValid : True
+        #     policy             : On
+        #     dataExists         : False
+        # (*) securityState      : None
+        #     lastReportTime     : 0001-01-01T00:00:00
+        #$Element.id
+        #$Element.name
+        #$Element.properties.vulnerabilityAssessmentScannerStatus
+        #$Element.properties.vulnerabilityAssessmentScannerStatus.securityState
+        $SupportedPass = ($Element.properties.vulnerabilityAssessmentScannerStatus.isSupported -eq "True")
+        $SecurityStatePass = ($Element.properties.vulnerabilityAssessmentScannerStatus.securityState -eq "Healthy")
+        Write-Output "    Vuln Scan: "
+        $Color = 'green';
+        $Status = "OK";
+        if ($SupportedPass) {$Color='green'; $Status="PASS"; } else { $Color='red'; $Status = "FAIL"; }
+        Write-Output "      vulnerability scan supported: $($Status)"
 
-        if ($SecurityState) { $Color='red'; $Status = "FAIL"; } else {$Color='green'; $Status = "PASS"; }
+        if ($SecurityStatePass) {$Color='green'; $Status = "PASS"; } else { $Color='red'; $Status = "FAIL"; }
         Write-Output "      security state: $($Status)"
 
-        # if $RunMode is agressive we need to take action and stop the VM
-        if ( ($MissingPatches) -and ($RunMode -eq 1) )
-        {
-          $VmStopURI  = "https://management.azure.com" + $ResourceName + '/powerOff?api-version=2016-04-30-preview'
-          try
-          {
-            $Response = Invoke-RestMethod -Method Post -Uri $VmStopURI -Headers $Header -ContentType 'application/x-www-form-urlencoded'
-            Write-Output ">>> Action taken: VM was stopped!"
-            $StoppedVMs += 1
-            $ActionsArray += "$($ShortName) was stopped"
-          }
-          catch
-          {
-            Write-Warning -Message "StatusCode: $($_.Exception.Response.StatusCode.value__)"
-            Write-Warning -Message "StatusDescription: $($_.Exception.Response.StatusDescription)"
-            $ErrorsArray += "Could not stop resource $($ShortName): $($_.Exception.Response.StatusCode.value__) : $($_.Exception.Response.StatusDescription)"
-
-          }
-        }
       }
-      else
-      {
-        Write-Output "      missing patches: VM state is $($VmState). Ignoring"
-      }
-    }
-
-    # Test vulnerability assesement status
-    if ($false) # ($Element.properties.vulnerabilityAssessmentScannerStatus -ne $null)
-    {
-      # This is how the data looks like (*) marked items are interesting to us
-      # (*) isSupported        : False
-      #     dataType           : VulnerabilityAssessment
-      #     isScannerDataValid : True
-      #     policy             : On
-      #     dataExists         : False
-      # (*) securityState      : None
-      #     lastReportTime     : 0001-01-01T00:00:00
-      #$Element.id
-     	#$Element.name
-      #$Element.properties.vulnerabilityAssessmentScannerStatus
-      #$Element.properties.vulnerabilityAssessmentScannerStatus.securityState
-      $SupportedPass = ($Element.properties.vulnerabilityAssessmentScannerStatus.isSupported -eq "True")
-      $SecurityStatePass = ($Element.properties.vulnerabilityAssessmentScannerStatus.securityState -eq "Healthy")
-      Write-Output "    Vuln Scan: "
-      $Color = 'green';
-      $Status = "OK";
-      if ($SupportedPass) {$Color='green'; $Status="PASS"; } else { $Color='red'; $Status = "FAIL"; }
-      Write-Output "      vulnerability scan supported: $($Status)"
-
-      if ($SecurityStatePass) {$Color='green'; $Status = "PASS"; } else { $Color='red'; $Status = "FAIL"; }
-      Write-Output "      security state: $($Status)"
-
     }
   }
 }
 Write-Output "--------------------------------------------------"
 Write-Output "Summary:"
 Write-Output "  Scanned subscriptions: $($ScannedSubscriptions)"
-Write-Output "  Scanned VMs: $($ScannedSubscriptions)"
 Write-Output "  Scanned VMs: $($ScannedVMs)"
 Write-Output "  Stopped VMs: $($StoppedVMs)"
 Write-Output "  Restarted VMs: $($RestartedVms)"
+Write-Output "  Randomly scanned Azure SQL Databases: $($ScannedAzureSqlDbs)"
+Write-Output "  Randomly Scanned Storage Accounts: $($ScannedStorageAccts)"
+Write-Output "  Scanned certificates for expiration: $($ScannedCerts)"
 
 Write-Output "Actions:"
 foreach ($Action in $ActionsArray)
@@ -318,7 +460,7 @@ if ($SlackURL -ne $null)
   + ' , "icon_url": "", "icon_emoji": ":cop:", "fallback": "Upgrade your client",' `
   + ' "notifications": ['
   # now we add status info
-  $body += '{ "type": "info", "title": "Summary", "text": "I scanned ' + $ScannedSubscriptions + ' subscriptions, ' + $ScannedVMs + ' VMs and found ' + $ActionsArray.length + ' things to do." },'
+  $body += '{ "type": "info", "title": "Summary", "text": "I scanned ' + $ScannedSubscriptions + ' subscriptions, ' + $ScannedVMs + ' VMs, ' +  + $ScannedCerts + ' Certificates ' + 'as well as randomly (for now) selected ' + $ScannedStorageAccts + ' Storage Accounts, ' + $ScannedAzureSqlDbs + ' Azure SQL Databases, ' + 'and found ' + $ActionsArray.length + ' things to do." },'
 
   if ($StoppedVMs -gt 0)
   {
