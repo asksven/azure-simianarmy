@@ -25,7 +25,7 @@
 
 Set-StrictMode -Version Latest
 
-$Version="1.1.0"
+$Version="1.1.1"
 
 # Hack: see https://social.msdn.microsoft.com/Forums/en-US/460eea23-3082-4b26-a3a4-38757d70853c/powershell-webjobs-and-kudu-powershell-these-dont-support-progress-bars-so-fail-on-many-commands?forum=windowsazurewebsitespreview
 $ProgressPreference="SilentlyContinue" # make sure no-one tries to show a progress-bar
@@ -115,7 +115,7 @@ foreach ($SubscriptionID in $subscriptionArray)
     try
     {
       # see https://docs.microsoft.com/en-us/rest/api/appservice/webapps#WebApps_List
-      Write-Host scanning web application
+      Write-Output "scanning web application"
       $Request = Invoke-RestMethod -Uri $ListWebSitesURI -Headers $Header -ContentType 'application/x-www-form-urlencoded'
 
       # Iterate over the result set
@@ -129,7 +129,7 @@ foreach ($SubscriptionID in $subscriptionArray)
           $ScannedCerts += 1
 
           $url = "https://" + $entry
-          Write-Host "  Checking $($url)"
+          Write-Output "  Checking $($url)"
           $req = [Net.HttpWebRequest]::Create($url)
           $req.Timeout = $timeoutMilliseconds
           try
@@ -138,7 +138,7 @@ foreach ($SubscriptionID in $subscriptionArray)
           }
           catch
           {
-            #Write-Host Exception while checking URL $url`: $_
+            #Write-Output Exception while checking URL $url`: $_
           }
 
           $expiration = $req.ServicePoint.Certificate.GetExpirationDateString().Split(" ")[0]
@@ -156,11 +156,11 @@ foreach ($SubscriptionID in $subscriptionArray)
 
           if ($certExpiresIn -gt $minimumCertAgeDays)
           {
-            Write-Host "    PASS"
+            Write-Output "    PASS"
           }
           else
           {
-            Write-Host "    Cert for site $($url) expires in $($certExpiresIn) days on $($expiration). Threshold is $($minimumCertAgeDays) days" 
+            Write-Output "    Cert for site $($url) expires in $($certExpiresIn) days on $($expiration). Threshold is $($minimumCertAgeDays) days" 
             $FindingsArray += "Certificate for $($url) expires in less than $($minimumCertAgeDays) on $($expiration)"
 
           }
@@ -188,7 +188,7 @@ foreach ($SubscriptionID in $subscriptionArray)
 
     continue
   }
-  #Write-Host "Status"
+  #Write-Output "Status"
   #$Request
 
   # Iterate over the result set
@@ -211,7 +211,7 @@ foreach ($SubscriptionID in $subscriptionArray)
     if ($Resource[6] -eq "Microsoft.Storage")
     {
       # we toss a coin and 
-      if ((get-random -maximum 10) -le 3)
+      if ((get-random -maximum 10) -le 1)
       {
         $ScannedStorageAccts += 1
 
@@ -228,7 +228,7 @@ foreach ($SubscriptionID in $subscriptionArray)
           $FindingsArray += "$($ShortName) is not encrypted. I may start enforcing this soon"
         }
       }
-      else { Write-Host "    Randomly skipped"}
+      else { Write-Output "    Randomly skipped"}
     }
 
     if ($Resource[6] -eq "Microsoft.Web")
@@ -242,7 +242,7 @@ foreach ($SubscriptionID in $subscriptionArray)
       # there are SQL Server and databases and we are only interested in the latter
       if ($Resource[9] -eq "databases")
       {
-        if ((get-random -maximum 10) -le 3)
+        if ((get-random -maximum 10) -le 1)
         {
 
           $ScannedAzureSqlDbs += 1
@@ -256,7 +256,7 @@ foreach ($SubscriptionID in $subscriptionArray)
             $FindingsArray += "$($ShortName) has no TDE enabled. I may start enforcing this soon"
           }
         }
-        else { Write-Host "    Randomly skipped"}
+        else { Write-Output "    Randomly skipped"}
       }
     }
 
@@ -333,7 +333,6 @@ foreach ($SubscriptionID in $subscriptionArray)
         # we query the VM status
         # see https://docs.microsoft.com/en-us/rest/api/compute/virtualmachines/virtualmachines-get
         $VmInfoURI  = "https://management.azure.com" + $ResourceName + '/InstanceView?api-version=2017-03-30'
-        #Write-Host "Checking VM: " $VmInfoURI
 
         $VmState = 'unknown'
 
@@ -364,7 +363,7 @@ foreach ($SubscriptionID in $subscriptionArray)
             $Status = "PASS"
           }
 
-          #Write-Host missing patches: $Status -Foreground $Color -NoNewLine
+          #Write-Output missing patches: $Status -Foreground $Color -NoNewLine
           Write-Output "      missing patches: $($Status)"
 
           if ($SecurityState) { $Status = "FAIL"; } else { $Status = "PASS"; }
