@@ -25,7 +25,7 @@
 
 Set-StrictMode -Version Latest
 
-$Version="1.1.1"
+$Version="1.1.2"
 
 # Hack: see https://social.msdn.microsoft.com/Forums/en-US/460eea23-3082-4b26-a3a4-38757d70853c/powershell-webjobs-and-kudu-powershell-these-dont-support-progress-bars-so-fail-on-many-commands?forum=windowsazurewebsitespreview
 $ProgressPreference="SilentlyContinue" # make sure no-one tries to show a progress-bar
@@ -128,8 +128,11 @@ foreach ($SubscriptionID in $subscriptionArray)
         {
           $ScannedCerts += 1
 
+          $ShortName = "sub=$($SubscriptionID) name=$($Element.name)"
+          
+
           $url = "https://" + $entry
-          Write-Output "  Checking $($url)"
+          Write-Output "  Checking $($ShortName) $($url)"
           $req = [Net.HttpWebRequest]::Create($url)
           $req.Timeout = $timeoutMilliseconds
           try
@@ -161,7 +164,7 @@ foreach ($SubscriptionID in $subscriptionArray)
           else
           {
             Write-Output "    Cert for site $($url) expires in $($certExpiresIn) days on $($expiration). Threshold is $($minimumCertAgeDays) days" 
-            $FindingsArray += "Certificate for $($url) expires in less than $($minimumCertAgeDays) on $($expiration)"
+            $FindingsArray += "$($ShortName) Certificate for $($url) expires in less than $($minimumCertAgeDays) on $($expiration)"
 
           }
         }
@@ -205,7 +208,7 @@ foreach ($SubscriptionID in $subscriptionArray)
     # Skip everything that is not a VM, an Azure SQL, a Storage Account or an Azure App
     if (($Resource[6] -ne "Microsoft.Compute" -and $Resource[6] -ne "Microsoft.Sql" -and $Resource[6] -ne "Microsoft.Storage" -and $Resource[6] -ne "Microsoft.Web") -or $Resource[-1] -eq "") { continue; }
 
-    $ShortName = "rg=$($Resource[4]) type=$($Resource[6])/$($Resource[7]) name=$($Resource[-1])"
+    $ShortName = "sub=$($SubscriptionID) rg=$($Resource[4]) type=$($Resource[6])/$($Resource[7]) name=$($Resource[-1])"
     Write-Output "  $($ShortName)"
 
     if ($Resource[6] -eq "Microsoft.Storage")
