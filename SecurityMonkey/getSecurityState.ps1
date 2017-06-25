@@ -16,6 +16,9 @@
        - SlackChannel     Can be empty, default will be used in that case
        # Feature flags
        - FF_Certs         (default) 1 is checking, can be disabled by setting it to 0
+       - FF_Storage       (default) 1 is checking, can be disabled by setting it to 0
+       - FF_SqlDb         (default) 1 is checking, can be disabled by setting it to 0
+       
 
 .NOTES
      Author     : asksven - sven.knispel@mail.com
@@ -25,7 +28,7 @@
 
 Set-StrictMode -Version Latest
 
-$Version="1.1.2"
+$Version="1.1.3"
 
 # Hack: see https://social.msdn.microsoft.com/Forums/en-US/460eea23-3082-4b26-a3a4-38757d70853c/powershell-webjobs-and-kudu-powershell-these-dont-support-progress-bars-so-fail-on-many-commands?forum=windowsazurewebsitespreview
 $ProgressPreference="SilentlyContinue" # make sure no-one tries to show a progress-bar
@@ -55,6 +58,9 @@ $RunMode          = $Env:Runmode # can be 0 (passive) or 1 (agressive), if undef
 $SlackURL         = $Env:SlackUrl # can be empty, in that case nothing will get sent to slack
 $SlackChannel     = $Env:SlackChannel # can be empty, default will be used in that case
 $FF_Certs         = $Env:FF_Certs 
+$FF_Storage       = $Env:FF_Storage
+$FF_SqlDb         = $Env:FF_SqlDb
+
 
 
 # Counters
@@ -79,6 +85,8 @@ if ( ($Tenant -eq $null) -or ($ClientID -eq $null) -or ($ClientSecret -eq $null)
   exit
 }
 
+##########################
+# Handle feature flags
 if ( ($FF_Certs -eq $null) -or ($FF_Certs -ne 0))
 {
   $FF_Certs = 1
@@ -88,6 +96,28 @@ else
   $FF_Certs = 0  
   $ActionsArray += "FF_Certs was set to 0: disabled"
 }
+
+if ( ($FF_Storage -eq $null) -or ($FF_Storage -ne 0))
+{
+  $FF_Storage = 1
+}
+else
+{
+  $FF_Storage = 0  
+  $ActionsArray += "FF_Storage was set to 0: disabled"
+}
+
+if ( ($FF_SqlDb -eq $null) -or ($FF_SqlDb -ne 0))
+{
+  $FF_SqlDb = 1
+}
+else
+{
+  $FF_SqlDb = 0  
+  $ActionsArray += "FF_SqlDb was set to 0: disabled"
+}
+
+
 
 if ( ($RunMode -eq $null) -or ($Runmode -lt 0) -or ($runMode -gt 1) )
 {
@@ -209,10 +239,11 @@ foreach ($SubscriptionID in $subscriptionArray)
     if (($Resource[6] -ne "Microsoft.Compute" -and $Resource[6] -ne "Microsoft.Sql" -and $Resource[6] -ne "Microsoft.Storage" -and $Resource[6] -ne "Microsoft.Web") -or $Resource[-1] -eq "") { continue; }
 
     $ShortName = "sub=$($SubscriptionID) rg=$($Resource[4]) type=$($Resource[6])/$($Resource[7]) name=$($Resource[-1])"
-    Write-Output "  $($ShortName)"
+    
 
-    if ($Resource[6] -eq "Microsoft.Storage")
+    if ( ($Resource[6] -eq "Microsoft.Storage") -and ($FF_Storage -eq 1) )
     {
+      Write-Output "  $($ShortName)"
       # we toss a coin and 
       if ((get-random -maximum 10) -le 1)
       {
@@ -237,14 +268,16 @@ foreach ($SubscriptionID in $subscriptionArray)
     if ($Resource[6] -eq "Microsoft.Web")
     {
       # Websites are currently not implemented so there is noting to do
+      Write-Output "  $($ShortName)"
     }
 
 
-    if ($Resource[6] -eq "Microsoft.Sql")
+    if ( ($Resource[6] -eq "Microsoft.Sql") -and ($FF_SqlDb -eq 1) )
     {
       # there are SQL Server and databases and we are only interested in the latter
       if ($Resource[9] -eq "databases")
       {
+        Write-Output "  $($ShortName)"
         if ((get-random -maximum 10) -le 1)
         {
 
@@ -265,6 +298,7 @@ foreach ($SubscriptionID in $subscriptionArray)
 
     if ($Resource[6] -eq "Microsoft.Compute")
     {
+      Write-Output "  $($ShortName)"
       $ScannedVMs += 1
 
 
@@ -283,9 +317,13 @@ foreach ($SubscriptionID in $subscriptionArray)
         #$Element.id
         #$Element.name
 
-        $RebootPending = ($Element.properties.patchscannerdata.rebootPendingSecurityState -ne "Healthy")
-        $MissingPatches = ($Element.properties.patchscannerdata.missingPatchesSecurityState -ne "Healthy")
+        Write-Output $Element.properties.patchscannerdata
+
+        $RebootPending = ( ($Element.properties.patchscannerdata.rebootPendingSecurityState -ne "Healthy") -and ($Element.properties.patchscannerdata.rebootPendingSecurityState -ne "None") )
+        $MissingPatches = ( ($Element.properties.patchscannerdata.missingPatchesSecurityState -ne "Healthy") -and ($Element.properties.patchscannerdata.missingPatchesSecurityState -ne "None") )
         $SecurityState = ($Element.properties.patchscannerdata.securityState -ne "Healthy")
+
+        $SecurityDataExists = ($Element.properties.patchscannerdata.dataExists -eq "True")
 
         # Parse lastReportTime
         $Template = 'yyyy-MM-dd'
@@ -308,6 +346,11 @@ foreach ($SubscriptionID in $subscriptionArray)
 
         Write-Output "    Patch Status:"
         Write-Output "      reboot pending: $($Status)"
+        if (! $SecurityDataExists)
+        { 
+          Write-Output "      security data: FAIL"
+            $FindingsArray += "$($ShortName) is missing scan data"
+        }
 
         # if reboot s pending reboot the VM (if $RunMode is "agressive")
         if ( ($RebootPending) -and ($Runmode -eq 1) )
