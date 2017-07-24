@@ -5,9 +5,6 @@ containers=$(sudo docker image list | awk '{if(NR>1) print $1}')
 
 echo "Analysing ${containers[*]}"
 
-SLACK_URL="https://functions-slack.azurewebsites.net/api/SlackBot?code=r0c705ab3q8ec1h86qjmwkrugbqepbrf"
-SLACK_CHANNEL="#testing"
-
 # initialize arrays
 stops=()
 warns=()
